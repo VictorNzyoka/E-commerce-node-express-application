@@ -27,7 +27,7 @@ const statsRoutes = require('./src/stats/stats.route');
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/reviews', reviewRoutes);
-app.use('/api/order', checkoutRoutes);
+app.use('/api/orders', checkoutRoutes);
 app.use('/api/stats', statsRoutes);
 
 main().then(() => console.log("mongodb connected successfully")). catch(err => console.log(err));

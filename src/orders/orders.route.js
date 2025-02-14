@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Order = require('./orders.model');
 const { initiateSTKPush } = require('../services/mpesa');
+const verifyToken = require('../../middleware/verifyToken');
+const verifyAdmin = require('../../middleware/verifyAdmin');
 
 // 📌 Route: Checkout and Initiate Payment
 router.post("/checkout", async (req, res) => {
@@ -14,7 +16,6 @@ router.post("/checkout", async (req, res) => {
     try {
       // Create an order entry
       const order = new Order({
-        orderId: uuidv4(),
         products,
         amount,
         email,
@@ -32,7 +33,7 @@ router.post("/checkout", async (req, res) => {
           message: "Payment request sent. Complete the payment on your phone.",
           checkoutRequestID: paymentResponse.CheckoutRequestID,
           merchantRequestID: paymentResponse.MerchantRequestID,
-          orderId: order._id, // Send order ID for reference
+          orderId: order._id, 
         });
       } else {
         res.status(400).json({
@@ -93,5 +94,108 @@ router.post("/checkout", async (req, res) => {
     }
   });
   
+  
+  router.get("/:email", async (req, res) => {
+    console.log('Received request for orders. Query:', req.query);
+    try {
+      const email  = req.params.email;
+  
+      if (!email) {
+        // console.log('No email provided in the request');
+        return res.status(400).send({ message: "Email is required" });
+      }
+  
+      // console.log('Searching for orders with email:', email);
+      const orders = await Order.find({ email })
+        // .sort({ createdAt: -1 })
+        // .select('-__v');
+  
+      // console.log('Orders found:', orders.length);
+  
+      if (orders.length === 0 || !orders) {
+        // console.log('No orders found for email:', email);
+        return res.status(400).send({ orders: 0, message: "No orders found for this email" });
+      }
+  
+      // console.log('Sending orders response');
+      res.status(200).send(orders);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      res.status(500).send({ message: "Error fetching orders", error: error.message });
+    }
+  });
+
+  router.get("/order/:id", async(req,res) =>{
+    try {
+      const order = await Order.findByIdAndUpdate(req.params.id);
+      if(!order){
+        return res.status(404).send({message:"Orders not found"})
+      }
+      res.status(200).send(order);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      res.status(500).send({ message: "Error fetching orders", error: error.message });
+      
+    }
+  }
+  )
+
+  router.get("/",async(req,res) =>{
+    try {
+      const orders = await Order.find().sort({createdAt: -1})
+      if(!orders){
+        return res.status(404).send({message: "No orders found"})
+      }
+      res.status(200).send(orders)
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      res.status(500).send({ message: "Error fetching orders", error: error.message });
+      
+    }
+  })
+  router.patch('/update-order-status/:id',async (req,res) =>{
+    const {id} =req.params;
+    const{status} = req.body;
+    if(!status){
+      return res.status(400).send({message: "Status is required"})
+    }
+    try {
+      const updatedOrder = await Order.findByIdAndUpdate(id, {
+        status,
+        updatedAt: new Date()
+      },{
+        bew: true, runValidators: true
+      }
+    );
+    if(!updatedOrder){
+      return res.status(404).send({message: "Order not found"})
+    }
+    res.status(200).json({
+      message: "Stus updated successfully",
+      order: updatedOrder
+    })
+    } catch (error) {
+      console.error('Error fetching orders status:', error);
+      res.status(500).send({ message: "Error fetching orders status", error: error.message });
+      
+    }
+  })
+  router.delete("/delete-order/id", async(req,res) => {
+    const {id} = req.params;
+    try {
+      const deletedOrder = await Order.findByIdAndDelete(id);
+      if(!deletedOrder){
+        return res.status(404).send({message: "Order not found"})
+      }
+      res.status(200).json({
+        message: "Order deleted successfully",
+        order: deletedOrder
+      })
+    } catch (error) {
+      console.error('Error deleting orders:', error);
+      res.status(500).send({ message: "Error deleting orders", error: error.message });
+      
+    }
+  })
   module.exports = router;
   
