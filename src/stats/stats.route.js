@@ -21,7 +21,7 @@ router.get('/user-stats/:email', async(req,res) =>{
         const totalPaymentResults = await Order.aggregate([
             {$match: {email: email}},
             {
-                $group: {_id: null,totalAmount: {$sum: "$amount"}}
+                $group: {_id: null,amount: {$sum: "$amount"}}
             }
         ])
 

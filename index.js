@@ -6,6 +6,7 @@ const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const bodyParser = require('body-parser')
 const port = process.env.PORT || 5000;
+const ngrok = require("ngrok");
 
 app.use(express.json({limit: "25mb"}));
 // app.use((express.urlencoded({limit: "25mb"})));
@@ -17,12 +18,16 @@ app.use(cors({
     credentials: true
 }))
 
+
 //All routes
 const authRoutes = require('./src/users/user.route');
 const productRoutes = require('./src/products/product.route');
 const reviewRoutes = require('./src/reviews/reviews.route');
 const checkoutRoutes = require('./src/orders/orders.route');
 const statsRoutes = require('./src/stats/stats.route');
+
+//Image upload
+const uploadImage = require('./src/utils/uploadImage')
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -40,8 +45,19 @@ async function main() {
       });
       
 }
+app.post("/uploadImage", (req,res) => {
+  uploadImage(req.body.image).then((url) => res.send(url)).catch((err) => res.status(500).send(err));
+})
 
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
+
+try {
+  const url = await ngrok.connect(port);
+  console.log(`Public URL: ${url}`);
+} catch (err) {
+  console.error("Error starting ngrok:", err);
+}
+

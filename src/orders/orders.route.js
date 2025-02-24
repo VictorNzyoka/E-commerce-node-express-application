@@ -1,99 +1,186 @@
 const express = require('express');
 const router = express.Router();
+const axios = require("axios");
 const Order = require('./orders.model');
-const { initiateSTKPush } = require('../services/mpesa');
-const verifyToken = require('../../middleware/verifyToken');
-const verifyAdmin = require('../../middleware/verifyAdmin');
+const Payment = require('./order.payment');
 
-// 📌 Route: Checkout and Initiate Payment
-router.post("/checkout", async (req, res) => {
-    const { products, email, phone, amount } = req.body;
-  
-    if (!products || !phone || !amount || !email) {
-      return res.status(400).json({ message: "Missing required fields" });
+
+// Generate M-Pesa access token middleware
+const generateToken = async (req, res, next) => {
+  try {
+    const consumer = process.env.MPESA_CONSUMER_KEY;
+    const secret = process.env.MPESA_CONSUMER_SECRET;
+
+    if (!consumer || !secret) {
+      throw new Error("Consumer key or secret key is missing");
     }
-  
-    try {
-      // Create an order entry
-      const order = new Order({
-        products,
-        amount,
-        email,
-        phone,
-        status: "pending",
-      });
-  
-      await order.save();
-  
-      // Initiate M-Pesa Payment
-      const paymentResponse = await initiateSTKPush(phone, amount, order._id);
-  
-      if (paymentResponse.ResponseCode === "0") {
-        res.status(200).json({
-          message: "Payment request sent. Complete the payment on your phone.",
-          checkoutRequestID: paymentResponse.CheckoutRequestID,
-          merchantRequestID: paymentResponse.MerchantRequestID,
-          orderId: order._id, 
-        });
-      } else {
-        res.status(400).json({
-          message: "M-Pesa payment request failed",
-          response: paymentResponse,
-        });
+
+    const auth = Buffer.from(`${consumer}:${secret}`).toString("base64");
+
+    const response = await axios.get(
+      "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+      {
+        headers: {
+          authorization: `Basic ${auth}`,
+        },
       }
-    } catch (error) {
-      console.error("Error processing checkout:", error);
-      res.status(500).json({ message: "Failed to process checkout" });
-    }
-  });
-  
-  // 📌 Route: M-Pesa Payment Callback
-  router.post("/callback", async (req, res) => {
-    console.log("M-Pesa Callback Received:", req.body);
-  
-    const { Body } = req.body;
-  
-    if (!Body || !Body.stkCallback) {
-      return res.status(400).json({ message: "Invalid callback data" });
-    }
-  
-    const { MerchantRequestID, CheckoutRequestID, ResultCode, CallbackMetadata } =
-      Body.stkCallback;
-  
-    if (ResultCode === 0) {
-      // Payment successful
-      const mpesaReceipt = CallbackMetadata.Item.find(
-        (item) => item.Name === "MpesaReceiptNumber"
-      )?.Value;
-  
-      const phoneNumber = CallbackMetadata.Item.find(
-        (item) => item.Name === "PhoneNumber"
-      )?.Value;
-  
-      try {
-        // Update order status in database
-        const order = await Order.findOne({ phone: phoneNumber });
-  
-        if (order) {
-          order.status = "completed";
-          await order.save();
-  
-          console.log(`Order ${order._id} completed with M-Pesa receipt: ${mpesaReceipt}`);
-          res.status(200).json({ message: "Payment successful", orderId: order._id });
-        } else {
-          res.status(404).json({ message: "Order not found" });
-        }
-      } catch (error) {
-        console.error("Error updating order:", error);
-        res.status(500).json({ message: "Error updating order status" });
-      }
+    );
+
+    req.token = response.data.access_token;
+    // console.log(req.token)
+    next();
+  } catch (error) {
+    console.error("Token Generation Error:", error);
+    if (res && res.status) {
+      return res.status(500).json({ success: false, message: "Failed to generate access token" });
     } else {
-      // Payment failed
-      console.error(`M-Pesa payment failed for CheckoutRequestID: ${CheckoutRequestID}`);
-      res.status(400).json({ message: "M-Pesa payment failed" });
+      console.error("Response object is undefined");
     }
+  }
+};
+router.get("/test", async (req, res) => {
+  // Mock req and res objects
+  const mockReq = {
+    env: process.env,
+    token: null,
+  };
+  const mockRes = {
+    status: function(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json: function(data) {
+      console.log(data);
+      return this;
+    }
+  };
+
+  // Call generateToken with mockReq, mockRes, and a mock next function
+  generateToken(mockReq, mockRes, () => {
+    console.log("Token generated successfully:", mockReq.token);
+  }).catch(error => {
+    console.error("Error generating token:", error);
   });
+});
+
+router.post("/checkout", generateToken, async (req, res) => {
+  try {
+    const { phoneNumber, amount, products } = req.body;
   
+
+    // Validate required fields
+    // if (!phoneNumber || !amount || !products?.length) {
+    //   return res.status(400).json({ 
+    //     success: false, 
+    //     message: "Missing required fields" 
+    //   });
+    // }
+
+    // Generate timestamp
+    const date = new Date();
+    const timestamp = 
+      date.getFullYear() +
+      ("0" + (date.getMonth() + 1)).slice(-2) +
+      ("0" + date.getDate()).slice(-2) +
+      ("0" + date.getHours()).slice(-2) +
+      ("0" + date.getMinutes()).slice(-2) +
+      ("0" + date.getSeconds()).slice(-2);
+
+    // Get shortcode and passkey from env
+    const shortcode = process.env.MPESA_SHORTCODE;
+    const passkey = process.env.MPESA_PASSKEY;
+
+    // Generate password
+    const password = new Buffer.from(shortcode + passkey + timestamp).toString("base64");
+
+   
+    const finalPhone = `254${String(phoneNumber).slice(-9)}`;
+    console.log(finalPhone)
+
+    // Prepare STK push request
+    const stkPayload = {
+      BusinessShortCode: shortcode,
+      Password: password,
+      Timestamp: timestamp,
+      TransactionType: "CustomerPayBillOnline",
+      Amount: amount,
+      PartyA: finalPhone,
+      PartyB: shortcode,
+      PhoneNumber: finalPhone,
+      CallBackURL: "https://mydomain.com/path",
+      AccountReference: finalPhone,
+      TransactionDesc: "test"
+    };
+
+    // Send STK push request
+    const response = await axios.post(
+      "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+      stkPayload,
+      {
+        headers: {
+          Authorization: `Bearer ${req.token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Handle successful response
+    if (response.data.ResponseCode === "0") {
+      res.status(200).json({
+        success: true,
+        message: "STK push sent successfully",
+        data: response.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: "STK push failed",
+        data: response.data
+      });
+    }
+
+  } catch (error) {
+    console.error("STK Push Error:", error.response?.data || error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to process payment",
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+
+  
+// 📌 Route: M-Pesa Payment Callback
+router.post("/callback", async (req, res) => {
+  try {
+      console.log("M-Pesa Callback Received:", req.body);
+
+      const { transaction_id, status } = req.body;
+
+      // Step 1: Find the Payment
+      const payment = await Payment.findOneAndUpdate(
+          { transaction_id },
+          { status },
+          { new: true }
+      );
+
+      if (payment) {
+          // Step 2: Update Order Status
+          await Order.findByIdAndUpdate(payment.order, { status: status === "Completed" ? "Processing" : "Pending" });
+
+          console.log("Payment updated:", payment);
+          res.status(200).json({ success: true, message: "Callback processed", payment });
+      } else {
+          console.log("Payment not found for transaction_id:", transaction_id);
+          res.status(404).json({ success: false, message: "Payment not found" });
+      }
+  } catch (error) {
+      console.error("Callback Error:", error.message);
+      res.status(500).json({ success: false, message: "Callback processing failed" });
+  }
+});
+
   
   router.get("/:email", async (req, res) => {
     console.log('Received request for orders. Query:', req.query);
@@ -140,7 +227,7 @@ router.post("/checkout", async (req, res) => {
   }
   )
 
-  router.get("/",async(req,res) =>{
+  router.get("/orders",async(req,res) =>{
     try {
       const orders = await Order.find().sort({createdAt: -1})
       if(!orders){

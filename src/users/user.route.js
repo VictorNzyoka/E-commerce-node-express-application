@@ -75,6 +75,7 @@ router.post('/logout', (req,res) => {
 router.delete('/user/:id', async(req,res) => {
     try{
         const {id} = req.params;
+        console.log(id)
         const user = await User.findByIdAndDelete(id);
         if(!user){
             return res.status(404).send({message: 'User not found'})
