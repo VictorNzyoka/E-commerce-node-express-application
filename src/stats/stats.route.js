@@ -5,47 +5,61 @@ const Reviews = require('../reviews/reviews.model');
 const Products = require('../products/products.model');
 const router = express.Router();
 
-router.get('/user-stats/:email', async(req,res) =>{
-    const {email} = req.params;
-    console.log(email)
-    if(!email){
-        return res.status(400).send({message: 'Email is required'});
+router.get('/user-stats/:email', async (req, res) => {
+    const { email } = req.params;
+
+    // Validate email number
+    if (!email) {
+        return res.status(400).send({ message: 'email number is required' });
     }
+
     try {
-        const user = await User.findOne({email: email})
-        // console.log(user)
-        if(!user){
-            return res.status(404).send({message: "User not found"});
+        // Find the user by phone number
+        const user = await User.findOne({ email: email });
+        if (!user) {
+            return res.status(404).send({ message: "User not found" });
         }
 
+        // Calculate total payments for completed orders
         const totalPaymentResults = await Order.aggregate([
-            {$match: {email: email}},
-            {
-                $group: {_id: null,amount: {$sum: "$amount"}}
+            { 
+                $match: { 
+                    email: email, 
+                    paymentStatus: "completed" // Filter by completed payments
+                } 
+            },
+            { 
+                $group: { 
+                    _id: null, 
+                    amount: { $sum: "$amount" } // Sum the amount for completed orders
+                } 
             }
-        ])
+        ]);
 
-        const totalPaymentAmount = totalPaymentResults.length > 0 ? totalPaymentResults[0].
-        totalAmount: 0
+        // Extract the total payment amount (default to 0 if no results)
+        const totalPaymentAmount = totalPaymentResults.length > 0 ? totalPaymentResults[0].amount : 0;
 
-        const totalReviews = await Reviews.countDocuments({userId: user._id})
+        // Count total reviews by the user
+        const totalReviews = await Reviews.countDocuments({ userId: user._id });
 
-        const totalPurchasedProducts = await Order.distinct("Products.productId",{email: email});
+        // Get distinct product IDs from completed orders
+        const totalPurchasedProducts = await Order.distinct("products.productId", { 
+            email: email, 
+            paymentStatus: "completed" // Filter by completed payments
+        });
 
+        // Send the response
         res.status(200).send({
-            totalPayments: totalPaymentAmount.toFixed(2),
+            totalPayments: totalPaymentAmount.toFixed(2), // Format to 2 decimal places
             totalReviews,
-            totalPurchasedProducts
-            
-        })
+            totalPurchasedProducts: totalPurchasedProducts.length // Return the count of distinct products
+        });
 
-        
     } catch (error) {
-        console.error("Error fetching user stats", error);
-        res.status(500).send({message: 'Failed to fetch user stats'})
-        
+        console.error("Error fetching user stats:", error);
+        res.status(500).send({ message: 'Failed to fetch user stats' });
     }
-})
+});
 
 router.get('/admin-stats', async (req,res) => {
     try {

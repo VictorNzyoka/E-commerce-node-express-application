@@ -65,7 +65,7 @@ router.get("/test", async (req, res) => {
 
 router.post("/checkout", generateToken, async (req, res) => {
   try {
-    const { phoneNumber, amount, products } = req.body;
+    const { phoneNumber, amount, products,userId } = req.body;
   
 
     // Validate required fields
@@ -95,7 +95,16 @@ router.post("/checkout", generateToken, async (req, res) => {
 
    
     const finalPhone = `254${String(phoneNumber).slice(-9)}`;
-    console.log(finalPhone)
+    const newOrder = new Order({
+      userId,
+      phone: finalPhone,
+      products,
+      amount
+    });
+
+    await newOrder.save();
+
+    // console.log(finalPhone)
 
     // Prepare STK push request
     const stkPayload = {
@@ -107,7 +116,7 @@ router.post("/checkout", generateToken, async (req, res) => {
       PartyA: finalPhone,
       PartyB: shortcode,
       PhoneNumber: finalPhone,
-      CallBackURL: "https://mydomain.com/path",
+      CallBackURL: "https://6c84-197-232-62-193.ngrok-free.app/api/orders/callback",
       AccountReference: finalPhone,
       TransactionDesc: "test"
     };
@@ -126,10 +135,24 @@ router.post("/checkout", generateToken, async (req, res) => {
 
     // Handle successful response
     if (response.data.ResponseCode === "0") {
-      res.status(200).json({
+      const checkoutRequestId = response.data.CheckoutRequestID;
+
+      //Save Order with CheckoutRequestID as orderId
+      const newOrder = new Order({
+        orderId: checkoutRequestId,
+        userId,
+        phone: finalPhone,
+        products,
+        amount
+      });
+
+      await newOrder.save();
+
+      return res.status(200).json({
         success: true,
-        message: "STK push sent successfully",
-        data: response.data
+        message: "STK push sent successfully, order saved",
+        data: response.data,
+        // order: newOrder
       });
     } else {
       res.status(400).json({
@@ -150,42 +173,94 @@ router.post("/checkout", generateToken, async (req, res) => {
 });
 
 
-  
-// 📌 Route: M-Pesa Payment Callback
 router.post("/callback", async (req, res) => {
   try {
-      console.log("M-Pesa Callback Received:", req.body);
+    const callbackData = req.body;
+    const stkCallback = callbackData?.Body?.stkCallback;
 
-      const { transaction_id, status } = req.body;
+    // Log the stkCallback object for debugging
+    console.log("stkCallback:", stkCallback);
 
-      // Step 1: Find the Payment
-      const payment = await Payment.findOneAndUpdate(
-          { transaction_id },
-          { status },
-          { new: true }
+    //Check if payment failed (no metadata or ResultCode !== 0 means payment failed or was cancelled)
+    if (stkCallback.ResultCode !== 0 || !stkCallback.CallbackMetadata) {
+      console.log("User cancelled transaction or payment failed");
+
+      //Update order as "failed"
+      await Order.findOneAndUpdate(
+        { orderId: stkCallback.CheckoutRequestID },
+        { paymentStatus: "failed" },
+        { new: true }
       );
 
-      if (payment) {
-          // Step 2: Update Order Status
-          await Order.findByIdAndUpdate(payment.order, { status: status === "Completed" ? "Processing" : "Pending" });
+      return res.status(200).json({
+        success: false,
+        message: "Payment failed or user cancelled",
+      });
+    }
 
-          console.log("Payment updated:", payment);
-          res.status(200).json({ success: true, message: "Callback processed", payment });
-      } else {
-          console.log("Payment not found for transaction_id:", transaction_id);
-          res.status(404).json({ success: false, message: "Payment not found" });
-      }
+    console.log("Successful Payment Callback");
+
+    //Extract callback metadata
+    const checkoutRequestId = stkCallback?.CheckoutRequestID;
+    const metadata = stkCallback?.CallbackMetadata?.Item || [];
+
+    //Extract phone number and amount from metadata
+    const phoneMetadata = metadata.find(item => item.Name === "PhoneNumber")?.Value;
+    const amountMetadata = metadata.find(item => item.Name === "Amount")?.Value;
+
+    if (!checkoutRequestId || !phoneMetadata || !amountMetadata) {
+      console.log("Missing required metadata");
+      return res.status(400).json({ success: false, message: "Missing required metadata" });
+    }
+
+    //Find the order in the database
+    const order = await Order.findOne({ orderId: checkoutRequestId });
+
+    if (!order) {
+      console.log("Order not found");
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // Ensure phone number and amount match the order
+    if (order.phone !== String(phoneMetadata) || order.amount !== amountMetadata) {
+      console.log("Phone or amount mismatch, possible fraud attempt");
+      return res.status(400).json({
+        success: false,
+        message: "Phone number or amount does not match order details",
+      });
+    }
+
+    // Update order as successful
+    await Order.findOneAndUpdate(
+      { orderId: checkoutRequestId },
+      { paymentStatus: "completed", status: "processing" },
+      { new: true }
+    );
+
+    console.log("Payment successful, order updated");
+    res.status(200).json({
+      success: true,
+      message: "Payment successful, order updated",
+    });
+
   } catch (error) {
-      console.error("Callback Error:", error.message);
-      res.status(500).json({ success: false, message: "Callback processing failed" });
+    console.error("Callback Error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Callback processing failed",
+      error: error.message
+    });
   }
 });
 
+
+
   
   router.get("/:email", async (req, res) => {
-    console.log('Received request for orders. Query:', req.query);
+    // console.log('Received request for orders. Query:', req.query);
     try {
       const email  = req.params.email;
+      console.log(email)
   
       if (!email) {
         // console.log('No email provided in the request');

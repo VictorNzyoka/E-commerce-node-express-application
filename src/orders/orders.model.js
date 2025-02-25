@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const OrderSchema = new mongoose.Schema({
-  orderId: String,
+  orderId: { type: String, unique: true, sparse: true },
   userId: { type: String, required: true },
   phone: { type: String, required: true },
   products: [
@@ -9,14 +9,18 @@ const OrderSchema = new mongoose.Schema({
       productId: { type: String, required: true },
       quantity: { type: Number, required: true },
     }
-  ],
+  ], 
   amount: Number,
-  email: { type: String, required: true },
   status: {
     type: String,
     enum: ["pending", "processing", "shipped", "completed"],
     default: "pending"
+  },
+  paymentStatus: {
+    type: String,
+    enum: ["pending", "completed", "failed"],
+    default: "pending"
   }
 }, { timestamps: true });
 
-const Order = mongoose.model("Order", OrderSchema);
+module.exports = mongoose.model("Order", OrderSchema);

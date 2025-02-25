@@ -6,7 +6,7 @@ const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const bodyParser = require('body-parser')
 const port = process.env.PORT || 5000;
-const ngrok = require("ngrok");
+const ngrok = require('@ngrok/ngrok');
 
 app.use(express.json({limit: "25mb"}));
 // app.use((express.urlencoded({limit: "25mb"})));
@@ -54,10 +54,11 @@ app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
 
-try {
-  const url = await ngrok.connect(port);
-  console.log(`Public URL: ${url}`);
-} catch (err) {
-  console.error("Error starting ngrok:", err);
-}
+// ngrok.connect({ 
+//   addr: 8080, 
+//   authtoken: process.env.AUTH_TOKEN  
+// })
+// .then(listener => console.log(`Ingress established at: ${listener.url()}`))
+// .catch(err => console.error("Ngrok error:", err));
+
 
