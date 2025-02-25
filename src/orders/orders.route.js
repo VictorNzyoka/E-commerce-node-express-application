@@ -65,16 +65,17 @@ router.get("/test", async (req, res) => {
 
 router.post("/checkout", generateToken, async (req, res) => {
   try {
-    const { phoneNumber, amount, products,userId } = req.body;
+    const { phoneNumber, amount, products,userId,email } = req.body;
+    // console.log(req.body)
   
 
     // Validate required fields
-    // if (!phoneNumber || !amount || !products?.length) {
-    //   return res.status(400).json({ 
-    //     success: false, 
-    //     message: "Missing required fields" 
-    //   });
-    // }
+    if (!phoneNumber || !amount || !products || !userId || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Missing required fields" 
+      });
+    }
 
     // Generate timestamp
     const date = new Date();
@@ -95,14 +96,6 @@ router.post("/checkout", generateToken, async (req, res) => {
 
    
     const finalPhone = `254${String(phoneNumber).slice(-9)}`;
-    const newOrder = new Order({
-      userId,
-      phone: finalPhone,
-      products,
-      amount
-    });
-
-    await newOrder.save();
 
     // console.log(finalPhone)
 
@@ -141,6 +134,7 @@ router.post("/checkout", generateToken, async (req, res) => {
       const newOrder = new Order({
         orderId: checkoutRequestId,
         userId,
+        email,
         phone: finalPhone,
         products,
         amount
@@ -152,7 +146,7 @@ router.post("/checkout", generateToken, async (req, res) => {
         success: true,
         message: "STK push sent successfully, order saved",
         data: response.data,
-        // order: newOrder
+        order: newOrder
       });
     } else {
       res.status(400).json({
@@ -179,11 +173,11 @@ router.post("/callback", async (req, res) => {
     const stkCallback = callbackData?.Body?.stkCallback;
 
     // Log the stkCallback object for debugging
-    console.log("stkCallback:", stkCallback);
+    // console.log("stkCallback:", stkCallback);
 
     //Check if payment failed (no metadata or ResultCode !== 0 means payment failed or was cancelled)
     if (stkCallback.ResultCode !== 0 || !stkCallback.CallbackMetadata) {
-      console.log("User cancelled transaction or payment failed");
+      // console.log("User cancelled transaction or payment failed");
 
       //Update order as "failed"
       await Order.findOneAndUpdate(
@@ -198,7 +192,7 @@ router.post("/callback", async (req, res) => {
       });
     }
 
-    console.log("Successful Payment Callback");
+    // console.log("Successful Payment Callback");
 
     //Extract callback metadata
     const checkoutRequestId = stkCallback?.CheckoutRequestID;
@@ -233,7 +227,7 @@ router.post("/callback", async (req, res) => {
     // Update order as successful
     await Order.findOneAndUpdate(
       { orderId: checkoutRequestId },
-      { paymentStatus: "completed", status: "processing" },
+      { paymentStatus: "completed" },
       { new: true }
     );
 
@@ -253,14 +247,12 @@ router.post("/callback", async (req, res) => {
   }
 });
 
-
-
   
   router.get("/:email", async (req, res) => {
     // console.log('Received request for orders. Query:', req.query);
     try {
-      const email  = req.params.email;
-      console.log(email)
+      const { email }  = req.params;
+      // console.log(email)
   
       if (!email) {
         // console.log('No email provided in the request');
@@ -302,48 +294,95 @@ router.post("/callback", async (req, res) => {
   }
   )
 
-  router.get("/orders",async(req,res) =>{
+  router.get("/", async (req, res) => {
     try {
-      const orders = await Order.find().sort({createdAt: -1})
-      if(!orders){
-        return res.status(404).send({message: "No orders found"})
+      // Pagination
+      const page = parseInt(req.query.page) || 1; 
+      const limit = parseInt(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
+  
+      //Sorting (default: sort by createdAt in descending order)
+      const sort = req.query.sort || "-createdAt";
+  
+      //Filtering (optional)
+      const filter = {};
+      if (req.query.status) {
+        filter.status = req.query.status;
       }
-      res.status(200).send(orders)
+      if (req.query.paymentStatus) {
+        filter.paymentStatus = req.query.paymentStatus;
+      }
+  
+      //Fetch orders with pagination, sorting, and filtering
+      const orders = await Order.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit);
+  
+      //Get total number of orders (for pagination metadata)
+      const totalOrders = await Order.countDocuments(filter);
+  
+      //Send response with metadata
+      const meta = {
+        totalOrders,
+        currentPage: page,
+        ordersPerPage: limit,
+        totalPages: Math.ceil(totalOrders / limit),
+      };
+  
+      res.status(200).send({
+        success: true,
+        message: "Orders fetched successfully",
+        data: orders,
+        meta,
+      });
+  
+      // console.log(orders, meta); 
+  
     } catch (error) {
-      console.error('Error fetching orders:', error);
-      res.status(500).send({ message: "Error fetching orders", error: error.message });
-      
+      console.error("Error fetching orders:", error);
+      res.status(500).send({
+        success: false,
+        message: "Error fetching orders",
+        error: error.message,
+      });
     }
-  })
-  router.patch('/update-order-status/:id',async (req,res) =>{
-    const {id} =req.params;
-    const{status} = req.body;
-    if(!status){
-      return res.status(400).send({message: "Status is required"})
+  });
+  
+  router.patch('/update-order-status/:id', async (req, res) => {
+    const { id } = req.params; 
+    const { status } = req.body;
+  
+    // console.log("Received ID:", id);
+    // console.log("Received Status:", status); 
+  
+    if (!status) {
+      return res.status(400).send({ message: "Status is required" });
     }
+  
     try {
-      const updatedOrder = await Order.findByIdAndUpdate(id, {
-        status,
-        updatedAt: new Date()
-      },{
-        bew: true, runValidators: true
+      const updatedOrder = await Order.findByIdAndUpdate(
+        id,
+        { status, updatedAt: new Date() },
+        { new: true, runValidators: true }
+      );
+  
+      if (!updatedOrder) {
+        return res.status(404).send({ message: "Order not found" });
       }
-    );
-    if(!updatedOrder){
-      return res.status(404).send({message: "Order not found"})
-    }
-    res.status(200).json({
-      message: "Stus updated successfully",
-      order: updatedOrder
-    })
+  
+      res.status(200).json({
+        message: "Status updated successfully",
+        order: updatedOrder,
+      });
     } catch (error) {
-      console.error('Error fetching orders status:', error);
-      res.status(500).send({ message: "Error fetching orders status", error: error.message });
-      
+      console.error('Error updating order status:', error);
+      res.status(500).send({ message: "Error updating order status", error: error.message });
     }
-  })
-  router.delete("/delete-order/id", async(req,res) => {
+  });
+  router.delete("/delete-order/:id", async(req,res) => {
     const {id} = req.params;
+    // console.log(id)
     try {
       const deletedOrder = await Order.findByIdAndDelete(id);
       if(!deletedOrder){
