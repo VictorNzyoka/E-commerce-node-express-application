@@ -14,7 +14,7 @@ app.use(cookieParser());
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({extended: true}))
 app.use(cors({
-    origin: 'victor-nzyoka-react-node-mongodb-e-commerce-application.vercel.app',
+    origin: 'https://victor-nzyoka-react-node-mongodb-e-commerce-application.vercel.app',
     credentials: true
 }))
 
